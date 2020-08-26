@@ -1,0 +1,583 @@
+---
+title: "final_proj"
+author: "Dan Gause and Jacob Shashoua"
+date: "5/18/2020"
+header-includes:
+   - \usepackage{bbm}
+   - \usepackage{amsmath} 
+   - \usepackage{amsfonts} 
+   - \usepackage{graphicx}
+   - \usepackage[utf8]{inputenc}
+   - \usepackage{bbm}
+   - \usepackage{mathtools}
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+library(rvest)
+library(readxl)
+library(httr)
+library(class)
+library(resampledata)
+library(openintro)
+library(randomForest)
+library(caret)
+library(caretEnsemble)
+library(lattice)
+library(factoextra)
+library(ipred)
+library(dendextend)
+library(circlize)
+
+
+library(data.table)
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+library(rvest)
+library(readxl)
+library(httr)
+library(rsconnect)
+library(dplyr)
+library(leaflet)
+library(geojsonio)
+library(readxl)
+library(pls)
+library(e1071)
+
+setwd("~/Desktop/senior_classes/spring_2020/stat_learning/final_project")
+
+```
+
+
+# Looking at the 2012 and 2016 presidential election results through county demographics
+
+The 2012 and 2016 elections have been some of the most interesting, and historically notable to date. There has been a fair amount of speculation on the factors that contributed to Trump's election, some of it clearly biased. For such a politically polarized event, it can be hard to distinguish between fact-based statistics and emotionally biased claims. We wanted to observe the results firsthand, and unveil the true patterns lying within the data. Which demographic variables most contribute to a county's electoral decision? Which predictive algorithms best model election data?
+
+We found a Kaggle data set that includes the voting results by county for each US state, along with descriptive demographic variables. It took a little bit of finessing to get all of the data into a single data frame.
+
+### Collecting and cleaning the data
+
+```{r}
+county.facts <- read_csv("2012-2016-presidential-elections/county_facts.csv")
+county.votes <- read_csv("2012-2016-presidential-elections/US_County_Level_Presidential_Results_12-16.csv")
+
+county.votes <- county.votes %>%
+  rename(fips = combined_fips)
+
+county.joined <- left_join(county.facts, county.votes, by = "fips")
+
+county.joined <- county.joined %>%
+  dplyr::select( -X1, -state_abbr, -county_name,
+          -FIPS, -county_fips, -state_fips)
+
+county.joined <- county.joined %>%
+  rename(pop2014 = PST045214,
+         pop2010 = PST040210,
+         popPercentChange = PST120214,
+         under5 = AGE135214,
+         under18 = AGE295214,
+         over65 = AGE775214,
+         femalePercent = SEX255214,
+         raceWhite = RHI125214,
+         raceBlack = RHI225214,
+         raceIndian = RHI325214,
+         raceAsian = RHI425214,
+         raceHawaiian = RHI525214,
+         raceMixed = RHI625214,
+         raceHispanic = RHI725214,
+         foreignBorn = POP645213,
+         foreignLanguage = POP815213,
+         educHighSchool = EDU635213,
+         educBachelors = EDU685213,
+         veteran = VET605213,
+         commuteTime = LFE305213,
+         homeownershipRate = HSG445213,
+         medianHomePrice = HSG495213,
+         personsPerHousehold = HSD310213,
+         incomePerCapita = INC910213,
+         medianHouseholdIncome = INC110213,
+         povertyPercent = PVY020213,
+         privateBusinesses = BZA010213,
+         privateBusinessEmployees = BZA110213,
+         privateBusinessEmployChange = BZA115213,
+         nonemployerBusiness = BZA115213,
+         firmNumber = BZA115213,
+         blackFirmPercent = SBO315207,
+         indianFirmPercent = SBO115207,
+         asianFirmPercent = SBO215207,
+         hawaiianFirmPercent = SBO515207,
+         hispanicFirmPercent = SBO415207,
+         womenFirmPercent = SBO015207,
+         manufacturerShipments = MAN450207,
+         wholesaleSales = WTN220207,
+         retailSales = RTN130207,
+         retailSalesPerCapita = RTN131207,
+         serviceSales = AFN120207,
+         buildingPermits = BPS030214,
+         landArea = LND110210,
+         popPerArea = POP060210,
+         pop2010census = POP010210,
+         raceWhiteAlone = RHI825214,
+         sameHouse1yr= POP715213,
+         houseingUnits = HSG010214,
+         housingApartments = HSG096213,
+         households = HSD410213,
+         nonemployerBusiness = NES010213,
+         totalFirms = SBO001207)
+
+county.joined <- county.joined %>%
+  mutate(party2016 = ifelse(per_dem_2016 > per_gop_2016, "dem", "gop")) %>%
+  mutate(party2012 = ifelse(per_dem_2012 > per_gop_2012, "dem", "gop"))
+
+```
+
+
+### Unsupervised learning
+
+We decided that to get a good initial picture of our data set, we would employ some unsupervised learning techniques. We chose to use hierarchical clustering, k-means clustering, and Principal Components Analysis (PCA) to observe patterns in our data. These techniques each highlight different relationships within the data, including dependencies, and similarities, and orthogonality between variables. Through this initial data discovery, we'll have a better idea of the optimized number of variables and combinations to use in predictive models. 
+
+
+#### Hierarchical Clustering
+
+Let's first look at the data through hierarchical clustering. We will cluster our data by state demographicas to see which states are clustered together. This clustering does not include any voting data, only demographic variables. 
+
+```{r}
+##STATE STUFF
+state.info <- subset(county.facts, is.na(county.facts$state_abbreviation))
+state.info <- state.info[-1,-c(1,3)]
+
+
+#CLUSTERING
+scaled.state <- scale(state.info %>% dplyr :: select(-area_name))
+state.dist <- dist(scaled.state)
+
+hc.state1 <- hclust(state.dist)
+
+hc.state1 %>%
+  as.dendrogram() %>%
+  place_labels(state.info$area_name) %>%
+  set("labels_cex", .7 )%>%
+  color_labels(k = 10) %>% #colors based on making k number of clusters
+  set("branches_lwd", .7)%>%
+  color_branches(k=10) %>% #not working.. check notes
+  plot()
+
+
+
+```
+
+We can see that most of the clustering through the hierarchical clustering technique is related to geographical region. Most of these clusters make sense by region, with the exception of Florida, New York, California, and Texas, which are clustered together far from the others. All of these states have large populations and geographical area with a few huge cities.
+
+
+Now, lets look at a hierarchical cluster using a combination of state voting results and demographics, and compare this to our previous hierarchical clustering graph.
+
+```{r}
+county.joined.test <- county.joined %>% 
+  na.omit() %>%
+  dplyr::select(-fips, -area_name, -party2016, -party2012) %>%
+  group_by(state_abbreviation) %>%
+  summarise_all(mean)
+
+joined.scaled <- scale(county.joined.test %>% dplyr::select(-state_abbreviation))
+joined.dist <- dist(joined.scaled)
+
+hc.voting <- hclust(joined.dist)
+
+hc.voting %>%
+  as.dendrogram() %>%
+  place_labels(county.joined.test$state_abbreviation) %>%
+  set("labels_cex", .7 )%>%
+  color_labels(k = 10) %>% #colors based on making k number of clusters
+  set("branches_lwd", .7)%>%
+  color_branches(k=10) %>% #not working.. check notes
+  plot()
+
+```
+
+Here we see that DC is a huge outlier, which makes sense because it is a demographical enigma, and has a high democratic voting record. There is still some geographical region clustering, but there are some interesting changes. MA, CT, and NJ are still clustered close together, but now they are next closest to CA, FL, and DL. These we assume are some the most democratic states with fairly high populations. Interstingly, this cluster was grouped heirarchically far from ME, VT, MD, NY, NH, and RI. Most of the midwest was grouped into a single cluster, and the south was grouped into a single cluster. AZ and NM were clustered farther from their southwestern neighbors. 
+
+Some of the differences here can likely be explained by county demographics vs overall state demographics. We often see that rural counties tend towards the Republican party, so even if states vote Democratic overall due to high urban populations, the mean county voting percentage record will be calculated as Republican. While this is not a new insight, it confirms widely spread claims. 
+
+
+#### K-means clustering
+
+Now, let's use K-means clustering to observe our data. K-means is known to handle big data better than hierarchical clustering, so let's observe differences between the two unsupervised techniques.
+
+```{r}
+
+state.info <- state.info %>%
+  filter(area_name != "Alaska")
+state.info.scaled <- scale(state.info %>% dplyr::select(-area_name))
+
+tot <- NULL
+for(i in 1:20){
+  km <- kmeans(state.info.scaled, i)
+  tot[i] <- km$tot.withinss/i
+}
+plot(tot) #plot showing tot.withinss on avg. for each cluster... is a metric for us to see where it flattens
+#so we have better idea of what number of k clusters to use
+###show similar states on graph colored by cluster
+
+```
+Plotting this, we can observe the total within cluster variation for k-means analysis on our state demographic data. The the elbow is around k = 4 or 5, and this point minimizes the number of clusters while maximizing the effectiveness of the clustering model (minimizing the distance of each observation from its cluster center). Let's now visualize k-means clustering with 5 clusters.
+
+
+```{r fig1, fig.height = 9, fig.width = 14}
+
+km.states <- kmeans(state.info.scaled, 5)
+
+county.joined.test %>% 
+  mutate(cluster = km.states$cluster) %>%
+  ggplot(aes(x = educBachelors, y = per_dem_2016)) +
+  geom_point(aes(color = factor(cluster), size = 10)) +
+  geom_text(aes(label = county.joined.test$state_abbreviation)) + 
+  xlab("population percent with Bachelors degree") + 
+  ylab("Percent democratic 2016")
+
+```
+
+Here the x-axis is the percent of state residents (county average) with a bachelors degree or higher, and the y-axis is the percent of state residents (county average) who voted for the Democratic nominee in 2016. We see a linear overall relation between these two variables, and this representation of the data highlights the k-means clusters fairly well. We notice a tight cluster of southern and midwestern states with lower higher education and democratic voting rates, a tight cluster of northeastern states with greater higher education and democratic voting rates, an "outlier" cluster, and two wider spread clusters. 
+
+Clearly these two variables do not give us a full picture of what's going on, but k-means gives us a good idea of how many different clusters there are of states with similar characteristics. Let's now employ k-means clustering on the individual counties. 
+
+```{r}
+county.info.scaled <- scale(county.joined %>% na.omit() %>% dplyr::select(-fips, -area_name, -state_abbreviation, -party2016, -party2012))
+
+tot <- NULL
+for(i in 1:20){
+  km <- kmeans(county.info.scaled %>% na.omit(), i)
+  tot[i] <- km$tot.withinss/i
+}
+plot(tot)
+```
+We can see that our total within cluster variation for k-means analysis on our county demographic data is very similar to that on our state demographic data. Again, let's choose k = 5 for our number of clusters.
+
+
+```{r}
+
+km.county <- kmeans(county.info.scaled, 5)
+
+county.joined %>% na.omit() %>% 
+  mutate(cluster = km.county$cluster) %>%
+  ggplot(aes(x = educHighSchool, y = femalePercent)) +
+  geom_point(aes(color = factor(cluster))) 
+
+```
+
+From this visualization we can see that the k-means clusters are overlapping in high school education and female percent. There is one large, broader cluster, two fairly tight clusters separated at ~0.80 percent high school education per county, and two small clusters that are not apparently visible through this visualization. 
+
+Let's get a better idea of which states the counties in each cluster belong to.
+
+```{r}
+county.test <- county.joined %>% na.omit %>%
+  mutate(cluster = km.county$cluster)
+
+for(i in 1:5){
+  top.states <- county.test %>% 
+    filter(cluster == i) %>%
+    dplyr::select(state_abbreviation) %>%
+    table() %>%
+    sort(decreasing = TRUE) %>%
+    head(5)
+  print(top.states)
+}
+  
+```
+We can see that some of these clusters are separated by geographical region, such as the cluster with only southern states, while one cluster contains CA, NJ, NY, FL, and TX, larger population states. 
+
+
+Let us now observe the confusion matrix for this k-mean clustering, comparing the county party voting results for the 2012 election.
+
+```{r}
+table(km.county$cluster, county.joined$party2012 %>% na.omit())
+
+```
+
+In observing the confusion matrix for this k-means clustering, we see that there are two large clusters with vast majority gop voting results, and one with vast majority democratic voting results. We assume that the largest cluster, holding ~ 2000 counties, would contain rural counties that often vote republican. This would explain the enormity of this cluster, and it's political "redness". The highly democratic cluster most likely contains urban counties containing large cities. We assume that the remaining clusters contain different geographical regions with suburban, and counties with outlier behavior.
+
+This k-means clustering analysis gives us a good idea of the clustered groups that the US counties may fall into. The most important factors that we ran into were geographical region, and urban/rural characteristics. 
+
+
+
+#### Principal Component Analysis (PCA)
+
+Let us now employ PCA on our data to highlight orthogonality and dependencies among our data. 
+
+```{r}
+pcaData <- county.joined[,-c(55:69)] %>% na.omit()%>% dplyr::select(-fips, -state_abbreviation,-area_name)
+pcaData <- pcaData[,-52]
+
+county.pca <- prcomp(pcaData,
+       scale. = TRUE)
+
+
+fviz_eig(county.pca)
+```
+
+The elbow here is difficult to discerne, but it looks like we want to use around 3 components for this PCA. The first component explains just under 40% of our variation, while the following 3 explain around 10%. Let's check out the most heavily weighted variables for the first two PCA components.
+
+```{r}
+#PCA component 1
+pca.comp1.indicies <- order(-county.pca$rotation[,1])
+head(colnames(pcaData[,pca.comp1.indicies]), 5)
+
+#PCA component 2
+pca.comp2.indicies <- order(-county.pca$rotation[,2])
+head(colnames(pcaData[,pca.comp2.indicies]), 5)
+```
+
+The first PCA component has to do with overall popoulation for each county. All of these variables are related. The second PCA component appears to weight variables to do with poverty more, as persons per household and younger county demographics are related to lower income levels, as well as immigrant areas which speak predominantly foreign languages. Let's visualize this model.
+
+```{r}
+county.pca$x[,c(1:2)] %>%
+  as.data.frame() %>%
+  mutate(cluster = km.county$cluster) %>%
+  ggplot(aes(x=PC1, y=PC2)) + 
+  geom_point(aes(color = factor(cluster))) +
+  xlab("principal component 1 (population)") + 
+  ylab("principal component 2 (poverty)") +
+  xlim(-5, 25) + ylim(-5, 10)
+```
+
+In plotting our county demographic data by the two top principal components from our PCA and coloring by our k-means clustering, we see some interesting relationships. These two unsupervised techniques largely agree! We see visually effective clustering for all five clusters. This is very telling in that these top pricipal components separate clusters well, and will likely be helpful in predictions where the clusters are also effective.
+
+Lets now do Principal Component Regression (PCR) on our data to predict county voting patterns. 
+
+```{r}
+
+# lets make subsets only including county demographic data and the percentage of democratic county votes for each election year.
+dem2012data <- county.joined[,-c(66:70)]
+dem2012data <- dem2012data[,-c(55:64)]
+dem2012data <- dem2012data %>% na.omit() %>%
+  dplyr::select(-fips, -state_abbreviation,-area_name)
+dem2012data <- dem2012data %>% na.omit()
+
+dem2016data <- county.joined[,-c(59:70)]
+dem2016data <- dem2016data[,-c(55:57)]
+dem2016data <- dem2016data %>% na.omit() %>%
+  dplyr::select(-fips, -state_abbreviation,-area_name)
+
+
+### Making a PCR model using 70% of data, then predicting the remaining 30%
+indexes <- sample(1:nrow(dem2012data), size = round(nrow(dem2012data)/3), replace = FALSE)
+
+train.data <- dem2012data[-indexes,]
+test.data <- dem2012data[indexes,]
+test2016.data <- dem2016data[indexes,]
+
+# Making a principal component regression model predicting percent dem vote per county in 2012 election on training data.
+pca1 <- pcr(per_dem_2012 ~.,
+            data = train.data,
+            scale. = TRUE)
+
+
+validationplot(pca1)
+```
+
+In observing the validation plot of our PCR model predicting the percent democratic vote percounty in the 2012 election on our training data, we see an "elbow" around 10 components, then a very sharp drop in Root Mean Square Error of Prediction (RMSEP) around 20 components. Therefore, the optimized number of components may be 10 or 20. 
+
+Now lets actually predict the 2012 election results of our test data using our PCR model.
+
+```{r}
+# Predicting the test data using our PCR model.
+preds <- predict(pca1, test.data)
+
+# Calculating the MSE by finding the residuals for each observation
+MSE <- (preds - dem2012data[indexes,]$per_dem_2012)^2
+meanMSE <- mean(MSE)
+
+hist(dem2012data[indexes,]$per_dem_2012, xlab = "percent democrat per county, 2012", main = "")
+hist(preds, xlim = c(0,1), xlab = "predictions", main = "", breaks = 30)
+
+
+```
+
+We calculated an MSE of `r meanMSE` between the true values and our corresponding predictions. In observing the histograms of the test data, we see that while there is a similar mean democratic election percentage per county, the variance for the true data is higher than for our predicted data (the true data is distributed more evenly about the mean). Therefore, this model could be more accurate. 
+
+
+## Predictive models
+
+Now, let's start predicting! We are interested in predicting the election results for presidential elections by county. We will do this by comparing a number of different algorithms. Let's start with an introductory look at a random forest algorithm.
+
+#### Random Forest 
+
+
+```{r}
+
+county.facts.dbls <- dem2016data
+
+county.facts.party <- dem2016data %>%
+  mutate(per_gop_2016 = county.joined$per_gop_2016 %>% na.omit) %>%
+  mutate(party2016 = ifelse(per_dem_2016 > per_gop_2016, "dem", "gop")) %>%
+  dplyr::select(-per_dem_2016, -per_gop_2016)
+
+county.facts.party$party2016 <- factor(county.facts.party$party2016)
+```
+
+```{r}
+gop_percent <- mean(county.joined$party2016 %>% na.omit() == "gop")
+dem_percent <- mean(county.joined$party2016 %>% na.omit() == "dem")
+```
+
+```{r}
+rf.facts <- randomForest(per_dem_2016 ~., data = county.facts.dbls)
+
+varImpPlot(rf.facts)
+```
+
+Here we use the random forest algorithm looking at democratic votes in 2016 (per_dem_2016) as the dependent variable. We do this so that we can use the varImpPlot to evaluate which variables were most important for making splits at each node. As the plot shows, the value with the highest IncNodeImpurity corresponds to raceWhiteAlone, which is very telling and interesting considering how many specific variables there are. Within the top 5, there are 3 factors that directly relate to race which is not obvious when considering such a large data set.
+
+
+# Caret analysis
+
+Next wetest multiple models at the same time. As there are both classification as well as regression algorithms, we made ensembles with groups of algorithms for each type.  
+For classification algorithms, we chose: "rf", "lda", "rpart", and "svmLinear". 
+
+In our models predicting the factor party2016 (dem or gop), we chose to use the kappa coefficient as a metric for optimization because these classes are unbalanced. Only `r dem_percent` of all counties voted democratic in 2016, while  `r gop_percent` voted republican. The kappa coefficient handles unbalanced classes better than a simple accuracy metric. 
+
+Additionally, in our models predicting the numeric per_dem_2016, we chose to observe both the R-squared value and RMSEP. The R-squared metric for optimization gives the relative goodness of fit, so we could compare it to any other regression based model. On the other hand, the RMSEP gives the absolute goodness of fit, so we could compare the actual improvements in our models when testing on the same data set.
+
+
+
+```{r}
+
+#Caret ensemble CLASSIFICATION
+algorithmList <- c("rf", "lda", "rpart", "svmLinear")
+
+#algorithmList <- c("rpart", "AdaBag")
+
+trainControl1 <- trainControl(classProbs = TRUE, savePredictions = "final")
+
+ #need lots for lda
+
+try <- sample(1:3000, 500, replace = FALSE)
+
+my.models <- caretList(party2016 ~.,
+                       data = county.facts.party[try,],
+                       methodList = algorithmList,
+                       trControl = trainControl1) 
+```
+Where we would generally use a 70-30 split for train and test data, we only used 500 rows for our training set because the computational demand was too high. Since we have such a large data set (+3000 entries and +50 variables) we used a smaller sample size for training, however we still tested on all of the remaining data.
+```{r}
+indexes <- my.models$lda$finalModel$scaling %>%
+  order(decreasing = TRUE)
+my.models$lda$finalModel$scaling[indexes,] %>%
+  as.data.frame() %>%
+  rownames() %>%
+  head(n = 5)
+```
+Here we see the top 5 most important variables for the lda algorithm. It is very interesting to note the difference between lda and random forest as to what is important for making the models. 
+
+```{r}
+indexes.rf <- my.models$rf$finalModel$importance %>%
+  order(decreasing = TRUE)
+my.models$rf$finalModel$importance[indexes.rf,] %>%
+  as.data.frame() %>%
+  rownames() %>%
+  head(n = 5)
+
+```
+Here we see the top 5 most important variables for the rf algorithm in caret, which again emphasize the importance of race in determining splits. (differences between these variables and those in the varImpPlot are based on different train set and the implementation of "rf" in caret)
+
+The variable importances may not be the same for each algorithm, but it helps us to understand what the models deem as important.
+```{r}
+
+#Calculate some additional accuracy/kappy metrics
+results <- resamples(my.models)
+summary(results)
+dotplot(results)
+```
+In general, random forest (rf) slightly outperforms the other algorithms based on the kappa and accuracy metrics.
+
+In all, they have good accuracies and kappas, meaning that including them in the ensemble contribute well. If any of them proved to be a serious outlier in the accuracy and kappa categories, it would be worth removing them from the ensemble.
+```{r}
+#checking our model correlations
+modelCor(results)
+```
+This shows the correlation of the different algorithms within the ensemble.Now having verified that they are all viable algorithms to be applied to this data set, before we use them in an ensemble, we check their correlation, as low correlation between algorithms will help us make better predictions. This can be seen with the correlation matrix, which shows that there is little correlation between the chosen algorithms. 
+```{r}
+#Check accuracy of whole ensemble
+ensemble1<- caretEnsemble(my.models)
+ensemble1
+
+#Kappa.test(table(predict(ensemble1, county.facts.party), county.facts.party$party2016))
+
+confusionClassification <- confusionMatrix(data = predict(ensemble1, county.facts.party[-try,]), 
+                                           reference = county.facts.party$party2016[-try], mode = "prec_recall")
+confusionClassification
+```
+As we observe with the Confusion Matrix, when predicting on the test data (all of the indeces not used creating the model), we have a high Kappa, around 0.7, and accuracy over 90% which are both very good. These line up well with the ensemble's kappa and accuracy measures that are calculated internally when running on the train data. These are seen above under the ensemble information.
+
+
+Now we make an ensemble predicting the per_dem_2016 so we can explore some algorithms that work numerically (regression techniques) instead of with classification.
+```{r}
+
+#Caret Ensemble Regression
+
+algorithmList_reg <- c("svmLinear2","lm","pcr","rpart")
+trainControl2 <- trainControl(classProbs = FALSE, savePredictions = "final")
+
+my.models_reg <- caretList(per_dem_2016 ~.,
+                       data = county.facts.dbls[try,],
+                       methodList = algorithmList_reg,
+                       trControl = trainControl2)
+
+results_reg <- resamples(my.models_reg)
+summary(results_reg)
+dotplot(results_reg) #pcr and rpart seem to be best
+```
+An interesting observation is that pcr greatly outperforms the other alogorithms according to Rsquared, however it is worse in the other two metrics (RMSE and MAE). This may be explained by the pcr analysis previously, where the histogram showed its lack of variance as compared to the real data. It does a great job when concentrated near the mean, but quickly does worse when it is farther. This emphasizes the benefit to using an ensemble, as the algorithms use their strengths together to get the best result.
+
+The dotplot shows the different algorithms and how they perform based on the metrics of RMSE, MAE and Rsquared
+
+```{r}
+#Model correlations...very low which is good
+modelCor(results_reg)
+```
+Like with our first ensemble, we want to check the correlations between the algorithms. It is interesting to note that we see that lm and svm are decently correlated (around .6) compared to the other algorithms which are all below .5. 
+
+```{r}
+ensemble2 <- caretEnsemble(my.models_reg)
+
+county.preds <- county.facts.dbls[-try,] %>% 
+  mutate(preds = predict(ensemble2, county.facts.dbls[-try,]))
+
+
+
+rmse <- county.preds %>%
+  summarize(RMSE = sqrt(mean((per_dem_2016 - preds)^2))) #RMSE
+rmse
+
+
+avg <- mean(county.preds$preds)
+num <- numeric(nrow(county.preds))
+denom <- numeric(nrow(county.preds))
+
+for (i in 1:nrow(county.preds)){
+  num[i] <- (county.preds$preds[i]-county.preds$per_dem_2016[i])^2
+  denom[i] <- (county.preds$per_dem_2016[i] - avg)^2
+}
+ensemble2
+
+rsqrd <- sum(num)/sum(denom)
+paste0("The Rsquared value based on the test data is ", rsqrd)
+
+
+```
+We use Rsquared and RMSE as metrics for ensemble2 on the test data. We see RMSE to give a value `r rmse` and R-squared value of `r rsqrd`. These are similar to the values calculated in ensemble2 on itself, meaning these metrics stay consistent between the train and test data sets, which bodes well for our model. These values are also quite low which is what we hope for. 
+
+
+
+Overall, there is no "golden" variable that will describe a county's voting behavior. Rather, different combinations of variables best suited to different predictive algorithms can accurately predict county voting behavior. These variables describe wealth distributions, race and age demographics, and rural vs urban communities, and the internal machinery of each predictive algorithm prefer a unique combination of these statistics. In general, a set of relatively orthogonal variables performs the best, but the exact combination varies between each algorithm. Despite this variation in important variables between predictive algorithms, we can predict a county's vote with surprising accuracy, especially by combining several algorithms in an ensemble. It will be interesting to see how our models predict the 2020 election with updated county information. While the complexity of politics and its internal polistisse can sometimes render the will of the people recondite, our predictive algorithms bring clarity to the fog.
+
+# Honor Code
+## *We hereby do solemnly swear to use these newfound skills only to protect the repblic and better the people, while turning our shoulders to the sins of greed and lust for power, denying the personal agenda.*
+
+
